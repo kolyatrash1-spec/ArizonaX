@@ -1,280 +1,133 @@
 --[[
-    ArizonaX Mobile - Main Integration Script v2.0.0
-    Complete integration of UI Framework and ESP System
+    ArizonaX Main Script v1.0
+    Fully compatible with MonetLoader for Arizona Mode
     
     Commands:
-    /mmenu - Toggle menu visibility
-    /esp - Toggle ESP system
-    /esplines - Toggle ESP lines
-    /espstats - Show ESP statistics
-    /uiinfo - Show UI information
+    /mmenu - Toggle menu
+    /esp - Toggle ESP
+    /esplines - Toggle lines
+    /espclear - Clear objects cache
 ]]
 
-local UIFramework = require("lua.mobile_ui_framework")
-local ESPSystem = require("lua.esp_system")
+local menu = require("lib.menu")
+local esp = require("lib.esp")
 
--- Configuration
-local CONFIG = {
-    ESP_OBJECTS = {
-        -- Define object models to track
-        -- Format: {modelId = "label", ...}
-    },
-    DEFAULT_DISTANCE = 250,
-    DEFAULT_OPACITY = 100
-}
-
--- Game state
-local gameState = {
-    initialized = false,
-    lastPlayerX = 0,
-    lastPlayerY = 0,
-    lastPlayerZ = 0,
-    uiInitialized = false
-}
+-- Глобальные переменные
+local playerX, playerY, playerZ = 0, 0, 0
+local isMenuOpen = true
+local mouseX, mouseY = 0, 0
+local mouseDown = false
 
 --[[
-    Initialize main system
+    Получить позицию игрока
 ]]
-function initializeSystem()
-    if gameState.initialized then return end
-    
-    -- Wait for SAMP to be available
-    while not isSampAvailable() do
-        wait(100)
-    end
-    
-    -- Initialize UI Framework
-    UIFramework:initializeFonts()
-    UIFramework:initializeScaling()
-    
-    -- Initialize ESP System
-    ESPSystem:initialize(UIFramework.state.fonts.main, UIFramework.state.fonts.small)
-    
-    -- Register chat commands
-    registerChatCommands()
-    
-    gameState.initialized = true
-    sampAddChatMessage("[ArizonaX] System initialized successfully!", 0x2196F3)
-end
-
---[[
-    Register all chat commands
-]]
-function registerChatCommands()
-    -- Toggle menu
-    sampRegisterChatCommand("mmenu", function()
-        UIFramework:toggleMenu()
-        local visible = UIFramework.state.menuVisible
-        sampAddChatMessage("[Menu] " .. (visible and "Opened ✓" or "Closed ✗"), 0x2196F3)
-    end)
-    
-    -- Toggle ESP
-    sampRegisterChatCommand("esp", function()
-        local enabled = not ESPSystem.config.enabled
-        ESPSystem:setEnabled(enabled)
-        sampAddChatMessage("[ESP] " .. (enabled and "Enabled ✓" or "Disabled ✗"), 0x2196F3)
-    end)
-    
-    -- Toggle ESP lines
-    sampRegisterChatCommand("esplines", function()
-        local enabled = not ESPSystem.config.drawLines
-        ESPSystem:setLineDrawing(enabled)
-        sampAddChatMessage("[ESP] Lines " .. (enabled and "enabled ✓" or "disabled ✗"), 0x2196F3)
-    end)
-    
-    -- Show ESP statistics
-    sampRegisterChatCommand("espstats", function()
-        ESPSystem:printStats()
-    end)
-    
-    -- Show UI information
-    sampRegisterChatCommand("uiinfo", function()
-        local state = UIFramework:getState()
-        sampAddChatMessage("[UI] Menu position: " .. state.menuX .. ", " .. state.menuY, 0x2196F3)
-        sampAddChatMessage("[UI] Scale: " .. string.format("%.2f", state.scale), 0x2196F3)
-        sampAddChatMessage("[UI] Visible: " .. (state.menuVisible and "YES" or "NO"), 0x2196F3)
-    end)
-    
-    -- Clear ESP cache
-    sampRegisterChatCommand("espclear", function()
-        ESPSystem:clearCache()
-        sampAddChatMessage("[ESP] Cache cleared!", 0x2196F3)
-    end)
-end
-
---[[
-    Get player coordinates
-]]
-function getPlayerCoordinates()
-    local ok, ped = sampGetCharHandleBySampPlayerId(select(2, sampGetPlayerIdByCharHandle(PLAYER_PED)))
-    if ok then
-        local x, y, z = getCharCoordinates(ped)
+local function getPlayerPos()
+    local ok, x, y, z = pcall(getPlayerPos)
+    if ok and x and y and z then
         return x, y, z
     end
-    return gameState.lastPlayerX, gameState.lastPlayerY, gameState.lastPlayerZ
+    return playerX, playerY, playerZ
 end
 
 --[[
-    Build menu buttons
+    Отправить команду в чат
 ]]
-function buildMenuButtons()
-    return {
-        {
-            id = "btn_esp_toggle",
-            label = "🎯 ESP " .. (ESPSystem.config.enabled and "ON" or "OFF")
-        },
-        {
-            id = "btn_esp_lines",
-            label = "📍 Lines " .. (ESPSystem.config.drawLines and "ON" or "OFF")
-        },
-        {
-            id = "btn_esp_clear",
-            label = "🔄 Clear Cache"
-        }
-    }
+function sendCommand(cmd)
+    -- Обертка для совместимости
+    local ok, result = pcall(sendChatMessage, cmd)
+    if ok then
+        return result
+    end
+    return nil
 end
 
 --[[
-    Build menu sliders
+    Регистрация команды
 ]]
-function buildMenuSliders()
-    return {
-        {
-            id = "slider_distance",
-            label = "Distance (m):",
-            min = 50,
-            max = 500,
-            value = ESPSystem.config.maxDistance
-        },
-        {
-            id = "slider_opacity",
-            label = "Opacity:",
-            min = 0,
-            max = 100,
-            value = 100
-        }
-    }
-end
-
---[[
-    Handle button actions
-]]
-function handleButtonAction(buttonId)
-    if buttonId == "btn_esp_toggle" then
-        local enabled = not ESPSystem.config.enabled
-        ESPSystem:setEnabled(enabled)
-        sampAddChatMessage("[ESP] " .. (enabled and "Enabled ✓" or "Disabled ✗"), 0x2196F3)
-        
-    elseif buttonId == "btn_esp_lines" then
-        local enabled = not ESPSystem.config.drawLines
-        ESPSystem:setLineDrawing(enabled)
-        sampAddChatMessage("[ESP] Lines " .. (enabled and "enabled ✓" or "disabled ✗"), 0x2196F3)
-        
-    elseif buttonId == "btn_esp_clear" then
-        ESPSystem:clearCache()
-        sampAddChatMessage("[ESP] Cache cleared!", 0x2196F3)
+local function registerCommand(name, handler)
+    -- Для Arizona Mode с MonetLoader
+    if addCommandHandler then
+        addCommandHandler(name, handler)
     end
 end
 
 --[[
-    Handle slider value changes
+    Главная функция обработки событий
 ]]
-function handleSliderChange(sliderId, value)
-    if sliderId == "slider_distance" then
-        ESPSystem.config.maxDistance = value
-        sampAddChatMessage("[Config] Max distance set to " .. string.format("%.0f", value) .. "m", 0x2196F3)
-        
-    elseif sliderId == "slider_opacity" then
-        -- Future implementation for opacity control
-        sampAddChatMessage("[Config] Opacity set to " .. string.format("%.0f", value) .. "%", 0x2196F3)
-    end
-end
-
---[[
-    Register test objects for ESP (example)
-]]
-function registerTestObjects()
-    -- Example: Register some test objects
-    -- Uncomment and modify based on actual game objects
+function onFrame()
+    -- Получаем позицию игрока
+    playerX, playerY, playerZ = getPlayerPos()
     
-    -- ESPSystem:registerObject(1, "target", 1234, 100, 100, 10, "Target Object")
-    -- ESPSystem:registerObject(2, "item", 5678, 150, 150, 10, "Item")
-end
-
---[[
-    Main game loop
-]]
-function mainLoop()
-    while not gameState.initialized do
-        wait(100)
+    -- Получаем позицию мыши
+    local ok, mx, my = pcall(getCursorPos)
+    if ok and mx and my then
+        mouseX = mx
+        mouseY = my
     end
     
-    -- Register test objects
-    registerTestObjects()
-    
-    while true do
-        wait(0)
-        
-        -- Get input
-        local mouseX, mouseY = getCursorPos()
-        local mouseButton = nil
-        
-        -- Detect mouse button press
-        if isKeyJustPressed(0x01) then  -- Left mouse button
-            mouseButton = 0x01
-        end
-        
-        -- Get player position
-        local playerX, playerY, playerZ = getPlayerCoordinates()
-        gameState.lastPlayerX = playerX
-        gameState.lastPlayerY = playerY
-        gameState.lastPlayerZ = playerZ
-        
-        -- Build menu components
-        local buttons = buildMenuButtons()
-        local sliders = buildMenuSliders()
-        
-        -- Handle button clicks in menu
-        if UIFramework.state.menuVisible then
-            for _, button in ipairs(buttons) do
-                if button.id == "btn_esp_toggle" and mouseButton == 0x01 then
-                    local inArea = UIFramework:isPosInArea(
-                        mouseX, mouseY,
-                        UIFramework.state.menuX + UIFramework.config.padding,
-                        UIFramework.state.menuY + UIFramework.config.header_height + UIFramework.config.padding,
-                        UIFramework.config.menu_width - UIFramework.config.padding * 2,
-                        UIFramework.config.button_height
-                    )
-                    if inArea then
-                        handleButtonAction(button.id)
-                    end
-                end
-            end
-        end
-        
-        -- Render UI menu
-        UIFramework:renderMenu(mouseX, mouseY, mouseButton, buttons, sliders)
-        
-        -- Update slider values
-        for _, slider in ipairs(sliders) do
-            local newValue = UIFramework:getSliderValue(slider.id)
-            if newValue ~= slider.value then
-                handleSliderChange(slider.id, newValue)
-            end
-        end
-        
-        -- Render ESP system
-        ESPSystem:render(playerX, playerY, playerZ)
+    -- Получаем состояние клика мыши
+    local ok2, mousePressed = pcall(isKeyPressed, 0x01)  -- Left mouse button
+    if ok2 then
+        mouseDown = mousePressed
     end
+    
+    -- Отрисовка меню
+    menu:draw(mouseX, mouseY, mouseDown)
+    
+    -- Отрисовка ESP
+    esp:render(playerX, playerY, playerZ)
 end
 
 --[[
-    Main entry point
+    Обработчик команды /mmenu
+]]
+registerCommand("mmenu", function(params)
+    menu:toggle()
+    local state = menu.visible and "Открыто" or "Закрыто"
+    sendCommand("/say [ArizonaX] Меню " .. state)
+end)
+
+--[[
+    Обработчик команды /esp
+]]
+registerCommand("esp", function(params)
+    esp.enabled = not esp.enabled
+    local state = esp.enabled and "Включена" or "Отключена"
+    sendCommand("/say [ESP] " .. state)
+end)
+
+--[[
+    Обработчик команды /esplines
+]]
+registerCommand("esplines", function(params)
+    esp.drawLines = not esp.drawLines
+    local state = esp.drawLines and "включены" or "отключены"
+    sendCommand("/say [ESP] Линии " .. state)
+end)
+
+--[[
+    Обработчик команды /espclear
+]]
+registerCommand("espclear", function(params)
+    esp.objects = {}
+    sendCommand("/say [ESP] Кэш очищен")
+end)
+
+--[[
+    Инициализация скрипта
 ]]
 function main()
-    initializeSystem()
-    mainLoop()
+    -- Ждем загрузки сервера
+    wait(3000)
+    
+    sendCommand("/say [ArizonaX] Скрипт загружен! Используй /mmenu для меню")
+    
+    -- Основной цикл
+    while true do
+        pcall(onFrame)
+        wait(0)
+    end
 end
 
--- Start the script
+-- Запуск скрипта
 main()
